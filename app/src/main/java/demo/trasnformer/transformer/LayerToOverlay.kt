@@ -20,7 +20,7 @@ import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.StaticOverlaySettings
 import androidx.media3.effect.TextureOverlay
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers.Default
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -34,7 +34,7 @@ data class LayerConfiguration(val layers: List<Layer>)
 internal suspend fun LayerConfiguration.toOverlays(
     frameSize: Size,
     originalFrameSize: Size,
-): List<TextureOverlay> = Default {
+): List<TextureOverlay> = Dispatchers.Default {
     val scale = max(
         frameSize.width.toFloat() / originalFrameSize.width,
         frameSize.height.toFloat() / originalFrameSize.height
@@ -50,8 +50,17 @@ internal suspend fun LayerConfiguration.toOverlays(
 internal suspend fun LayerConfiguration.toBitmaps(
     frameSize: Size,
     originalFrameSize: Size,
-) {
-
+): List<Bitmap> = Dispatchers.Default {
+    val scale = max(
+        frameSize.width.toFloat() / originalFrameSize.width,
+        frameSize.height.toFloat() / originalFrameSize.height
+    )
+    adjustedLayers(scale).mapParallel { layer ->
+        when (layer) {
+            is ShapeLayer -> layer.toBitmap()
+            is TextLayer -> layer.toBitmap()
+        }
+    }
 }
 
 /**
@@ -80,6 +89,11 @@ private fun LayerConfiguration.adjustedLayers(scale: Float) = layers.map {
 
 @OptIn(UnstableApi::class)
 private fun ShapeLayer.toOverlay(frameSize: Size): TextureOverlay {
+    val bitmap = toBitmap()
+    return createBitmapOverlay(frameSize, offset, bitmap)
+}
+
+private fun ShapeLayer.toBitmap(): Bitmap {
     val layer = this
     val shapeWidth = layer.size.width.toFloat()
     val shapeHeight = layer.size.height.toFloat()
@@ -116,11 +130,16 @@ private fun ShapeLayer.toOverlay(frameSize: Size): TextureOverlay {
         }
     }
     canvas.drawRect(0f, 0f, canvas.width.toFloat(), canvas.height.toFloat(), paint)
-    return createBitmapOverlay(frameSize, offset, bitmap)
+    return bitmap
 }
 
 @OptIn(UnstableApi::class)
 private fun TextLayer.toOverlay(frameSize: Size): TextureOverlay {
+    val bitmap = toBitmap()
+    return createBitmapOverlay(frameSize, offset, bitmap)
+}
+
+private fun TextLayer.toBitmap(): Bitmap {
     val layer = this
     val text = layer.text
     val bitmap = createBitmap(layer.size.width, layer.size.height)
@@ -143,7 +162,7 @@ private fun TextLayer.toOverlay(frameSize: Size): TextureOverlay {
         .build()
     staticLayout.draw(canvas)
 
-    return createBitmapOverlay(frameSize, layer.offset, bitmap)
+    return bitmap
 }
 
 @OptIn(UnstableApi::class)
@@ -160,8 +179,10 @@ private fun createBitmapOverlay(
     )
 
     return BitmapOverlay.createStaticBitmapOverlay(
-        /* overlayBitmap = */ bitmap,
-        /* overlaySettings = */ StaticOverlaySettings.Builder()
+        /* overlayBitmap = */
+        bitmap,
+        /* overlaySettings = */
+        StaticOverlaySettings.Builder()
             .setBackgroundFrameAnchor(anchorX, anchorY)
             .build()
     )

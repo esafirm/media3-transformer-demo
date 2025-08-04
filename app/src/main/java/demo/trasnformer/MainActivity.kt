@@ -3,6 +3,7 @@ package demo.trasnformer
 import android.annotation.SuppressLint
 import android.app.Application
 import android.content.ContentValues
+import android.graphics.Bitmap
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
@@ -11,23 +12,34 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -40,6 +52,7 @@ import demo.trasnformer.transformer.LayerSize
 import demo.trasnformer.transformer.MediaTransformer
 import demo.trasnformer.transformer.ShapeLayer
 import demo.trasnformer.transformer.TextLayer
+import demo.trasnformer.transformer.toBitmaps
 import demo.trasnformer.transformer.toOverlays
 import demo.trasnformer.ui.theme.DemoTransformerTheme
 import kotlinx.coroutines.Dispatchers
@@ -147,6 +160,7 @@ private fun createLayer(size: Int): LayerConfiguration {
                 text = "This is a text",
                 color = Color.Black.copy(alpha = 0.5f).toArgb(),
                 lineHeight = 100,
+                fontSize = 80
             ),
         )
     )
@@ -154,7 +168,41 @@ private fun createLayer(size: Int): LayerConfiguration {
 
 @Composable
 fun Content(size: Int) {
-    Template(createLayer(size))
+    val layerConfiguration = remember(size) { createLayer(size) }
+    var bitmaps by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
+    var showBitmap by remember { mutableStateOf(false) }
+
+    LaunchedEffect(layerConfiguration) {
+        withContext(Dispatchers.IO) {
+            val frameSize = Size(size, size)
+            bitmaps = layerConfiguration.toBitmaps(frameSize, frameSize)
+        }
+    }
+
+    Column {
+        Box(
+            modifier = Modifier.pointerInput(Unit) {
+                detectTapGestures(
+                    onPress = {
+                        showBitmap = true
+                        awaitRelease()
+                        showBitmap = false
+                    }
+                )
+            }
+        ) {
+            if (showBitmap) {
+                if (bitmaps.isNotEmpty()) {
+                    BitmapTemplate(bitmaps = bitmaps)
+                } else {
+                    CircularProgressIndicator()
+                }
+            } else {
+                Template(layer = layerConfiguration)
+            }
+        }
+        Text("Touch and hold to see the bitmap version")
+    }
 }
 
 @Composable
@@ -174,7 +222,7 @@ fun Template(layer: LayerConfiguration) {
                 }
 
                 is TextLayer -> {
-                    val fontSize = with(LocalDensity.current) { (it.fontSize / fontScale).toSp() }
+                    val fontSize = with(LocalDensity.current) { it.fontSize.toSp() }
                     Text(
                         text = it.text,
                         color = Color(it.color),
@@ -186,10 +234,24 @@ fun Template(layer: LayerConfiguration) {
     }
 }
 
+@Composable
+fun BitmapTemplate(bitmaps: List<Bitmap>) {
+    Box {
+        bitmaps.forEach { bitmap ->
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = null,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
+
 @Preview(showBackground = true)
 @Composable
 fun GreetingPreview() {
     DemoTransformerTheme {
-        Content(360)
+        Content(600)
     }
 }
