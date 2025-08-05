@@ -6,13 +6,13 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 sealed interface Layer {
-    val offset: LayerOffset
+    val offset: Offset
     val size: LayerSize
 }
 
 @Serializable
 data class TextLayer(
-    override val offset: LayerOffset,
+    override val offset: Offset,
     override val size: LayerSize,
     val text: String,
     @ColorInt val color: Int,
@@ -22,20 +22,45 @@ data class TextLayer(
 
 @Serializable
 data class ShapeLayer(
-    override val offset: LayerOffset,
+    override val offset: Offset,
     override val size: LayerSize,
 
     @ColorInt val colorList: List<Int>,
-    @ColorInt val borderColor: Int? = null,
-    val borderWidth: Int? = null,
-) : Layer
+    val clipShape: ClipShape,
+    val shadow: Shadow? = null,
+
+    ) : Layer {
+    companion object {
+        fun solidColor(
+            offset: Offset,
+            size: LayerSize,
+            @ColorInt color: Int,
+            clipShape: ClipShape,
+            shadow: Shadow? = null,
+        ) = ShapeLayer(
+            offset = offset,
+            size = size,
+            colorList = listOf(color),
+            clipShape = clipShape,
+            shadow = shadow,
+        )
+    }
+}
 
 @Serializable
-data class LayerOffset(val x: Int, val y: Int) {
-    operator fun plus(offset: LayerOffset): LayerOffset = LayerOffset(x + offset.x, y + offset.y)
+data class Shadow(
+    val relativeOffset: Offset,
+    val clipShape: ClipShape,
+    @ColorInt val color: Int,
+    val blurRadius: Float,
+)
+
+@Serializable
+data class Offset(val x: Int, val y: Int) {
+    operator fun plus(offset: Offset): Offset = Offset(x + offset.x, y + offset.y)
 
     companion object {
-        val Zero: LayerOffset = LayerOffset(0, 0)
+        val Zero: Offset = Offset(0, 0)
     }
 }
 
@@ -46,6 +71,28 @@ data class LayerSize(val width: Int, val height: Int) {
 
     companion object {
 
-        val FullScreen: Size = Size(1080, 1920)
+        val FullScreen = LayerSize(1080, 1920)
+    }
+}
+
+
+@Serializable
+sealed interface ClipShape {
+
+    @Serializable
+    data object Circle : ClipShape
+
+    @Serializable
+    data object Rectangle : ClipShape
+
+    @Serializable
+    data class RoundedRectangle(
+        val topLeftRadius: Int,
+        val topRightRadius: Int,
+        val bottomRightRadius: Int,
+        val bottomLeftRadius: Int,
+    ) : ClipShape {
+
+        constructor(radius: Int) : this(radius, radius, radius, radius)
     }
 }

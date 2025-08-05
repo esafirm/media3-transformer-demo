@@ -84,6 +84,8 @@ class LayerToOverlayImpl(
             frameSize.height.toFloat() / originalFrameSize.height
         )
         return adjustedLayers(scale).mapParallel { layer ->
+            println("--> Creating bitmap for $layer")
+
             val bitmap = bitmapCreator.create(layer)
             block(bitmap, layer)
         }
@@ -222,7 +224,7 @@ private fun TextLayer.toBitmap(): Bitmap {
 @OptIn(UnstableApi::class)
 private fun createBitmapOverlay(
     frameSize: Size,
-    offset: LayerOffset,
+    offset: Offset,
     bitmap: Bitmap,
 ): BitmapOverlay {
     val (anchorX, anchorY) = calculateFrameAnchor(
@@ -247,11 +249,11 @@ private fun createBitmapOverlay(
  */
 private fun calculateFrameAnchor(
     frameSize: Size,
-    offset: LayerOffset,
+    offset: Offset,
     actualWidth: Int,
     actualSize: Int,
 ): Pair<Float, Float> {
-    if (offset == LayerOffset.Zero) return 0f to 0f
+    if (offset == Offset.Zero) return 0f to 0f
 
     val videoWidth = frameSize.width.toFloat()
     val videoHeight = frameSize.height.toFloat()
@@ -273,8 +275,8 @@ private fun calculateFrameAnchor(
 private operator fun LayerSize.times(scale: Float): LayerSize =
     LayerSize((width * scale).roundToInt(), (height * scale).roundToInt())
 
-private operator fun LayerOffset.times(scale: Float): LayerOffset =
-    LayerOffset((x * scale).roundToInt(), (y * scale).roundToInt())
+private operator fun Offset.times(scale: Float): Offset =
+    Offset((x * scale).roundToInt(), (y * scale).roundToInt())
 
 private suspend fun <T, R> Iterable<T>.mapParallel(
     transform: suspend CoroutineScope.(T) -> R,

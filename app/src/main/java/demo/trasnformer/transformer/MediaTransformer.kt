@@ -8,6 +8,9 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.Size
 import androidx.annotation.OptIn
+import androidx.compose.ui.graphics.Canvas
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.core.graphics.createBitmap
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
@@ -109,7 +112,7 @@ class MediaTransformer(
             Presentation.createForWidthAndHeight(
                 /* width = */ targetSize.width,
                 /* height = */ targetSize.height,
-                /* layout = */ Presentation.LAYOUT_STRETCH_TO_FIT,
+                /* layout = */ Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP,
             )
         )
 
