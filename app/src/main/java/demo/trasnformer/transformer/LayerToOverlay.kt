@@ -1,11 +1,8 @@
 package demo.trasnformer.transformer
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Color.alpha
-import android.graphics.Color.blue
-import android.graphics.Color.green
-import android.graphics.Color.red
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Shader
@@ -14,51 +11,109 @@ import android.text.TextPaint
 import android.util.Size
 import android.util.SizeF
 import androidx.annotation.OptIn
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.unit.IntSize
 import androidx.core.graphics.createBitmap
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.StaticOverlaySettings
 import androidx.media3.effect.TextureOverlay
+import demo.trasnformer.Template
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.invoke
+import kotlinx.coroutines.withContext
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-data class LayerConfiguration(val layers: List<Layer>)
+data class LayerCollection(val layers: List<Layer>)
+
+interface LayerToOverlay {
+
+    @OptIn(UnstableApi::class)
+    suspend fun toOverlays(
+        collection: LayerCollection,
+        frameSize: Size,
+        originalFrameSize: Size
+    ): List<TextureOverlay>
+
+    suspend fun toBitmap(
+        collection: LayerCollection,
+        frameSize: Size,
+        originalFrameSize: Size
+    ): List<Bitmap>
+}
+
+interface BitmapCreator {
+    suspend fun create(layer: Layer): Bitmap
+}
 
 @OptIn(UnstableApi::class)
-internal suspend fun LayerConfiguration.toOverlays(
-    frameSize: Size,
-    originalFrameSize: Size,
-): List<TextureOverlay> = Dispatchers.Default {
-    val scale = max(
-        frameSize.width.toFloat() / originalFrameSize.width,
-        frameSize.height.toFloat() / originalFrameSize.height
-    )
-    adjustedLayers(scale).mapParallel { layer ->
-        when (layer) {
-            is ShapeLayer -> layer.toOverlay(frameSize)
-            is TextLayer -> layer.toOverlay(frameSize)
+class LayerToOverlayImpl(
+    private val bitmapCreator: BitmapCreator
+) : LayerToOverlay {
+
+    override suspend fun toOverlays(
+        collection: LayerCollection,
+        frameSize: Size,
+        originalFrameSize: Size
+    ): List<TextureOverlay> {
+        return collection.process(frameSize, originalFrameSize) { bitmap, layer ->
+            createBitmapOverlay(frameSize, layer.offset, bitmap)
+        }
+    }
+
+    override suspend fun toBitmap(
+        collection: LayerCollection,
+        frameSize: Size,
+        originalFrameSize: Size
+    ): List<Bitmap> {
+        return collection.process(frameSize, originalFrameSize) { bitmap, _ -> bitmap }
+    }
+
+    private suspend fun <T> LayerCollection.process(
+        frameSize: Size,
+        originalFrameSize: Size,
+        block: (Bitmap, Layer) -> T
+    ): List<T> {
+        val scale = max(
+            frameSize.width.toFloat() / originalFrameSize.width,
+            frameSize.height.toFloat() / originalFrameSize.height
+        )
+        return adjustedLayers(scale).mapParallel { layer ->
+            val bitmap = bitmapCreator.create(layer)
+            block(bitmap, layer)
         }
     }
 }
 
-internal suspend fun LayerConfiguration.toBitmaps(
-    frameSize: Size,
-    originalFrameSize: Size,
-): List<Bitmap> = Dispatchers.Default {
-    val scale = max(
-        frameSize.width.toFloat() / originalFrameSize.width,
-        frameSize.height.toFloat() / originalFrameSize.height
-    )
-    adjustedLayers(scale).mapParallel { layer ->
-        when (layer) {
+class CanvasBitmapCreator : BitmapCreator {
+    override suspend fun create(layer: Layer): Bitmap {
+        return when (layer) {
             is ShapeLayer -> layer.toBitmap()
             is TextLayer -> layer.toBitmap()
+        }
+    }
+}
+
+class ComposeBitmapCreator(private val appContext: Context) : BitmapCreator {
+    override suspend fun create(layer: Layer): Bitmap {
+        return withContext(Dispatchers.Main.immediate) {
+            useVirtualDisplay(appContext) { display ->
+                captureComposable(
+                    context = appContext,
+                    size = IntSize(layer.size.width, layer.size.height),
+                    display = display
+                ) {
+                    Template(LayerCollection(layers = listOf(layer)))
+                    LaunchedEffect(Unit) {
+                        capture()
+                    }
+                }
+            }.asAndroidBitmap()
         }
     }
 }
@@ -69,7 +124,7 @@ internal suspend fun LayerConfiguration.toBitmaps(
  * @param scale The scale factor to adjust the layers.
  * @return A list of adjusted layers.
  */
-private fun LayerConfiguration.adjustedLayers(scale: Float) = layers.map {
+private fun LayerCollection.adjustedLayers(scale: Float) = layers.map {
     when (it) {
         is ShapeLayer -> it.copy(
             size = it.size * scale,
@@ -110,9 +165,8 @@ private fun ShapeLayer.toBitmap(): Bitmap {
         isAntiAlias = true
         val colorList = layer.colorList
         if (colorList.isNotEmpty()) {
-            val newColorList = colorList.map { it.withNormalizedAlpha() }
-            if (newColorList.size == 1) {
-                color = newColorList.first()
+            if (colorList.size == 1) {
+                color = colorList.first()
             } else {
                 val x0 = 0f
                 val y0 = 0f
@@ -121,7 +175,7 @@ private fun ShapeLayer.toBitmap(): Bitmap {
 
                 val gradient = LinearGradient(
                     x0, y0, x1, y1,
-                    newColorList.toIntArray(),
+                    colorList.toIntArray(),
                     null,
                     Shader.TileMode.CLAMP
                 )
@@ -146,7 +200,7 @@ private fun TextLayer.toBitmap(): Bitmap {
 
     val canvas = Canvas(bitmap)
     val textPaint = TextPaint().apply {
-        color = layer.color.withNormalizedAlpha()
+        color = layer.color
         isAntiAlias = true
         textSize = layer.fontSize.toFloat()
     }
@@ -221,20 +275,6 @@ private operator fun LayerSize.times(scale: Float): LayerSize =
 
 private operator fun LayerOffset.times(scale: Float): LayerOffset =
     LayerOffset((x * scale).roundToInt(), (y * scale).roundToInt())
-
-private const val NORMALIZED_ALPHA_THRESHOLD = 220
-
-private fun Int.withNormalizedAlpha(): Int {
-    val originalColor = this
-    val alpha = alpha(originalColor)
-    if (alpha >= NORMALIZED_ALPHA_THRESHOLD) return originalColor
-
-    val newAlpha = (alpha(originalColor) * 1.5f).toInt().coerceAtMost(NORMALIZED_ALPHA_THRESHOLD)
-    return android.graphics.Color.argb(
-        newAlpha,
-        red(originalColor), green(originalColor), blue(originalColor)
-    )
-}
 
 private suspend fun <T, R> Iterable<T>.mapParallel(
     transform: suspend CoroutineScope.(T) -> R,

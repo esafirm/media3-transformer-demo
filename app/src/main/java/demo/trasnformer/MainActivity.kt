@@ -14,18 +14,23 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,26 +39,27 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.util.UnstableApi
-import demo.trasnformer.transformer.LayerConfiguration
+import demo.trasnformer.transformer.CanvasBitmapCreator
+import demo.trasnformer.transformer.ComposeBitmapCreator
+import demo.trasnformer.transformer.LayerCollection
 import demo.trasnformer.transformer.LayerOffset
 import demo.trasnformer.transformer.LayerSize
+import demo.trasnformer.transformer.LayerToOverlay
+import demo.trasnformer.transformer.LayerToOverlayImpl
 import demo.trasnformer.transformer.MediaTransformer
 import demo.trasnformer.transformer.ShapeLayer
 import demo.trasnformer.transformer.TextLayer
-import demo.trasnformer.transformer.toBitmaps
-import demo.trasnformer.transformer.toOverlays
 import demo.trasnformer.ui.theme.DemoTransformerTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -70,6 +76,14 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    private val composeConverter: LayerToOverlay by lazy {
+        LayerToOverlayImpl(bitmapCreator = ComposeBitmapCreator(applicationContext))
+    }
+
+    private val canvasConverter: LayerToOverlay by lazy {
+        LayerToOverlayImpl(bitmapCreator = CanvasBitmapCreator())
+    }
+
     @SuppressLint("UnusedBoxWithConstraintsScope")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,9 +93,21 @@ class MainActivity : ComponentActivity() {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     BoxWithConstraints {
                         val screenWidth = with(LocalDensity.current) { maxWidth.toPx() }.toInt()
-                        Column(modifier = Modifier.padding(innerPadding)) {
-                            Content(screenWidth)
-                            Button(onClick = { export(screenWidth) }) {
+                        var converter by remember { mutableStateOf<LayerToOverlay>(composeConverter) }
+                        Column(
+                            modifier = Modifier
+                                .verticalScroll(rememberScrollState())
+                                .padding(innerPadding)
+                        ) {
+                            RadioButtonSingleSelection { selectedIndex ->
+                                converter = when (selectedIndex) {
+                                    0 -> composeConverter
+                                    1 -> canvasConverter
+                                    else -> composeConverter
+                                }
+                            }
+                            Content(screenWidth, converter)
+                            Button(onClick = { export(screenWidth, converter) }) {
                                 Text("Export")
                             }
                         }
@@ -91,7 +117,67 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun export(width: Int) = lifecycleScope.launch {
+    @Composable
+    private fun Content(size: Int, converter: LayerToOverlay) {
+        val layerConfiguration = remember(size) { createLayer(size) }
+        var bitmaps by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
+
+        LaunchedEffect(converter, layerConfiguration) {
+            withContext(Dispatchers.IO) {
+                val frameSize = Size(size, size)
+                bitmaps = converter.toBitmap(layerConfiguration, frameSize, frameSize)
+            }
+        }
+
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Template(layer = layerConfiguration)
+
+            if (bitmaps.isNotEmpty()) {
+                BitmapTemplate(bitmaps = bitmaps)
+            } else {
+                CircularProgressIndicator()
+            }
+        }
+    }
+
+    @Composable
+    private fun RadioButtonSingleSelection(
+        modifier: Modifier = Modifier,
+        onSelection: (Int) -> Unit,
+    ) {
+        val radioOptions = listOf("Compose", "Canvas")
+        val (selectedOption, onOptionSelected) = remember { mutableStateOf(radioOptions[0]) }
+        // Note that Modifier.selectableGroup() is essential to ensure correct accessibility behavior
+        Column(modifier.selectableGroup()) {
+            radioOptions.forEach { text ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
+                        .selectable(
+                            selected = (text == selectedOption),
+                            onClick = {
+                                onOptionSelected(text)
+                                onSelection(radioOptions.indexOf(text))
+                            },
+                        )
+                        .padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = (text == selectedOption),
+                        onClick = null // null recommended for accessibility with screen readers
+                    )
+                    Text(
+                        text = text,
+                        modifier = Modifier.padding(start = 16.dp)
+                    )
+                }
+            }
+        }
+    }
+
+    private fun export(width: Int, converter: LayerToOverlay) = lifecycleScope.launch {
         val tempFile = File(cacheDir, "output.mp4")
         val audioFile = getFileFromAssets("audio.m4a")
         val size = Size(width, width)
@@ -99,7 +185,7 @@ class MainActivity : ComponentActivity() {
             audioUri = audioFile.toUri(),
             outputSize = size,
             outputFile = tempFile,
-            overlays = createLayer(width).toOverlays(size, size),
+            overlays = converter.toOverlays(createLayer(width), size, size),
             onProgress = {
                 println("Export progress: $it")
             }
@@ -143,8 +229,8 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private fun createLayer(size: Int): LayerConfiguration {
-    return LayerConfiguration(
+private fun createLayer(size: Int): LayerCollection {
+    return LayerCollection(
         layers = listOf(
             ShapeLayer(
                 offset = LayerOffset(0, 0),
@@ -167,48 +253,9 @@ private fun createLayer(size: Int): LayerConfiguration {
 }
 
 @Composable
-fun Content(size: Int) {
-    val layerConfiguration = remember(size) { createLayer(size) }
-    var bitmaps by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
-    var showBitmap by remember { mutableStateOf(false) }
-
-    LaunchedEffect(layerConfiguration) {
-        withContext(Dispatchers.IO) {
-            val frameSize = Size(size, size)
-            bitmaps = layerConfiguration.toBitmaps(frameSize, frameSize)
-        }
-    }
-
-    Column {
-        Box(
-            modifier = Modifier.pointerInput(Unit) {
-                detectTapGestures(
-                    onPress = {
-                        showBitmap = true
-                        awaitRelease()
-                        showBitmap = false
-                    }
-                )
-            }
-        ) {
-            if (showBitmap) {
-                if (bitmaps.isNotEmpty()) {
-                    BitmapTemplate(bitmaps = bitmaps)
-                } else {
-                    CircularProgressIndicator()
-                }
-            } else {
-                Template(layer = layerConfiguration)
-            }
-        }
-        Text("Touch and hold to see the bitmap version")
-    }
-}
-
-@Composable
-fun Template(layer: LayerConfiguration) {
+fun Template(layer: LayerCollection, modifier: Modifier = Modifier) {
     val density = LocalDensity.current
-    Box {
+    Box(modifier = modifier) {
         layer.layers.forEach {
             when (it) {
                 is ShapeLayer -> {
@@ -235,8 +282,11 @@ fun Template(layer: LayerConfiguration) {
 }
 
 @Composable
-fun BitmapTemplate(bitmaps: List<Bitmap>) {
-    Box {
+fun BitmapTemplate(
+    bitmaps: List<Bitmap>,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier) {
         bitmaps.forEach { bitmap ->
             Image(
                 bitmap = bitmap.asImageBitmap(),
@@ -244,14 +294,5 @@ fun BitmapTemplate(bitmaps: List<Bitmap>) {
                 modifier = Modifier.fillMaxWidth()
             )
         }
-    }
-}
-
-
-@Preview(showBackground = true)
-@Composable
-fun GreetingPreview() {
-    DemoTransformerTheme {
-        Content(600)
     }
 }

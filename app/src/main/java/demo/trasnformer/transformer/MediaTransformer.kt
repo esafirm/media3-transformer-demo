@@ -109,7 +109,7 @@ class MediaTransformer(
             Presentation.createForWidthAndHeight(
                 /* width = */ targetSize.width,
                 /* height = */ targetSize.height,
-                /* layout = */ Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP,
+                /* layout = */ Presentation.LAYOUT_STRETCH_TO_FIT,
             )
         )
 
