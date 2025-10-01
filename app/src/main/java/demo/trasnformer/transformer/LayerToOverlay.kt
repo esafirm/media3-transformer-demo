@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
 import android.graphics.Shader
 import android.text.StaticLayout
 import android.text.TextPaint
@@ -163,6 +165,33 @@ private fun ShapeLayer.toBitmap(): Bitmap {
         Bitmap.Config.ARGB_8888
     )
     val canvas = Canvas(bitmap)
+
+    // Clipping
+    val path = Path()
+    when (val clipShape = layer.clipShape) {
+        is ClipShape.Circle -> {
+            path.addOval(0f, 0f, shapeWidth, shapeHeight, Path.Direction.CW)
+        }
+        is ClipShape.Rectangle -> {
+            // No path needed for rectangle clipping
+        }
+        is ClipShape.RoundedRectangle -> {
+            path.addRoundRect(
+                RectF(0f, 0f, shapeWidth, shapeHeight),
+                floatArrayOf(
+                    clipShape.topLeftRadius.toFloat(), clipShape.topLeftRadius.toFloat(),
+                    clipShape.topRightRadius.toFloat(), clipShape.topRightRadius.toFloat(),
+                    clipShape.bottomRightRadius.toFloat(), clipShape.bottomRightRadius.toFloat(),
+                    clipShape.bottomLeftRadius.toFloat(), clipShape.bottomLeftRadius.toFloat()
+                ),
+                Path.Direction.CW
+            )
+        }
+    }
+    if (!path.isEmpty) {
+        canvas.clipPath(path)
+    }
+
     val paint = Paint().apply {
         isAntiAlias = true
         val colorList = layer.colorList
